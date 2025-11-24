@@ -17,6 +17,10 @@ If you use a unix like shell, you can take advantage of shell's expansion for ra
 
 `multiping 192.168.0.{1..10}`
 
+Or use CIDR notation to scan entire subnets:
+
+`multiping 192.168.1.0/24`
+
 ## Documentation
 
 See `multiping -h` for detailed information.
@@ -66,6 +70,38 @@ Log format is pretty self explanatory:
 ### Quiet mode
 
 `-q` disable the refreshing output, might be useful in conjunction with `-log`.
+
+### CIDR subnet scanning
+
+`multiping` automatically detects and expands CIDR notation (e.g., `192.168.1.0/24`) to ping all hosts in the subnet (excluding network and broadcast addresses).
+
+Example:
+```bash
+multiping 192.168.1.0/24
+```
+
+### Once mode
+
+Use `-once` to ping each target once and exit, useful for scripting:
+
+```bash
+multiping -once 192.168.1.0/24
+```
+
+### Display filtering
+
+Filter the display to show only specific host states:
+- `-only-online`: Show only hosts that are reachable
+- `-only-offline`: Show only hosts that are unreachable
+
+These work in both continuous and once mode:
+```bash
+# Find all online hosts in subnet
+multiping -once -only-online 192.168.1.0/24
+
+# Monitor only offline hosts continuously
+multiping -only-offline 192.168.1.1 192.168.1.2 192.168.1.3
+```
 
 ### Self update
 

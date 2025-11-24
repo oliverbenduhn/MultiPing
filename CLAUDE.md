@@ -30,7 +30,7 @@ go run . localhost google.com
 # With TCP probing
 go run . tcp://google.com:443 tcp://[::1]:22
 
-# With CIDR expansion
+# With CIDR expansion (automatically expands subnets)
 go run . 192.168.1.0/24
 
 # System ping mode
@@ -39,8 +39,17 @@ go run . -s localhost
 # Quiet mode with logging
 go run . -q -log transitions.json google.com
 
-# Once mode (ping once and exit)
+# Once mode (ping once and exit) - useful for scripting
 go run . -once 192.168.1.0/24
+
+# Filter display: show only online hosts
+go run . -only-online 192.168.1.0/24
+
+# Filter display: show only offline hosts
+go run . -only-offline 192.168.1.0/24
+
+# Once mode with filters (e.g., find all online hosts in subnet)
+go run . -once -only-online 192.168.1.0/24
 ```
 
 ### Testing
@@ -52,9 +61,11 @@ No test files exist in the repository currently.
 ### Core Components
 
 1. **main.go**: Entry point, CLI flag parsing, signal handling, and main loop orchestration
-   - Handles CIDR expansion for subnet scanning
+   - Handles CIDR expansion for subnet scanning (delegates to `ExpandCIDR()` in subnet.go)
+   - Supports two modes: continuous monitoring (default) and once mode (`-once` flag)
    - Manages quiet vs live display modes
    - Coordinates between WrapperHolder and Display
+   - Passes filter flags (`-only-online`, `-only-offline`) to Display for filtered output
 
 2. **Ping Wrapper System** (Strategy Pattern)
    - `PingWrapperInterface`: Common interface for all ping implementations
@@ -73,10 +84,24 @@ No test files exist in the repository currently.
    - `Display` (display.go): Terminal UI using pterm library
    - Real-time updates with color-coded status (✅/❌)
    - Shows RTT, last loss information, and error messages
+   - Supports filtering: `SetFilter()` allows showing only online or offline hosts
+   - Filter logic checks both `stats.state` and `stats.error_message` to determine online status
 
-### Host String Parsing
+5. **Subnet Expansion & Once Mode** (subnet.go)
+   - `ExpandCIDR()`: Parses CIDR notation and expands to individual IP addresses
+   - Removes network and broadcast addresses from results
+   - `RunPingOnce()`: Concurrent one-time ping of multiple hosts
+   - Uses semaphore pattern (limit 100 concurrent) to avoid file descriptor exhaustion
+   - Supports filtering in once mode (`-only-online`, `-only-offline`)
 
-Host strings are parsed with regex in `pingwrapper.go:18`:
+### Host String Parsing & CIDR Expansion
+
+**CIDR Expansion** (in main.go, before wrapper creation):
+- Arguments are first checked if they match CIDR notation (e.g., `192.168.1.0/24`)
+- If CIDR: `ExpandCIDR()` expands to individual IPs, excluding network/broadcast
+- If not CIDR: treated as single host string
+
+**Host String Parsing** (in `pingwrapper.go:18`):
 - `ip://hostname` or bare hostname → ICMP ping
 - `tcp://hostname:port` → TCP probing
 - IPv4/IPv6 hints: `ip4://`, `ip6://`, `tcp4://`, `tcp6://`
@@ -84,11 +109,19 @@ Host strings are parsed with regex in `pingwrapper.go:18`:
 
 ### Concurrency Model
 
+**Continuous Monitoring Mode:**
 - Each ping wrapper runs in its own goroutine
 - System ping wrappers read stdout line-by-line in separate goroutines
 - TCP ping spawns a checker goroutine every second
 - TransitionWriter has a flush goroutine running every 500ms
 - Main loop updates display every 100ms
+
+**Once Mode** (`-once` flag):
+- `RunPingOnce()` uses worker pool pattern with WaitGroup
+- Semaphore limits concurrent pingers to 100 (prevents FD exhaustion)
+- Each host gets its own goroutine for parallel execution
+- Results collected via buffered channel
+- Timeout: 1 second per ping, count: 1
 
 ### Build System
 
@@ -135,6 +168,15 @@ State transitions are computed in `PWStats.ComputeState()`:
 - Tracks `last_loss_nano` and `last_loss_duration` for display
 - Writes JSON transition logs when state changes
 - Format: `{"Timestamp":"...","UnixNano":123,"Host":"...","Ip":"...","Transition":"up to down","State":false}`
+
+### Display Filtering
+
+The Display layer supports filtering visible hosts:
+- Filter is set via `SetFilter(onlyOnline, onlyOffline bool)`
+- Filter logic in `Update()` checks: `isOnline := stats.state && stats.error_message == ""`
+- If `onlyOnline=true`: skip hosts that are offline or have errors
+- If `onlyOffline=true`: skip hosts that are online
+- Useful for monitoring large subnets and focusing on specific states
 
 ## File Structure
 
